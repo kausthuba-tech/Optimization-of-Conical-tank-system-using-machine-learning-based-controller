@@ -1,0 +1,191 @@
+TANK_SIMULATION_MODEL = 'rlconicaltank1';
+MAX_EPISODES = 100; 
+AVERAGE_WINDOW = 50; % Average over 50 time-steps 
+ACCEPTABLE_DELTA = 0.05;
+% DDPG Hyper-paramaters
+criticLearningRate = 1e-03;
+actorLearningRate = 1e-04;
+GAMMA = 0.90;
+BATCH_SIZE = 64;
+% Critic network: Neurons for fully-connected Observsation (state) and Action paths 
+neuronsOP_FC1 = 50; neuronsOP_FC2 = 25; neuronsAP_FC1 = 25;
+obsInfo = rlNumericSpec([3 1],...
+'LowerLimit',[-inf -inf 0 ]',...
+'UpperLimit',[ inf inf inf]');
+obsInfo.Name = 'observations';
+obsInfo.Description = 'integrated error, error, and measured height';
+numObservations = obsInfo.Dimension(1);
+actInfo = rlNumericSpec([1 1]);
+actInfo.Name = 'flow';
+numActions = actInfo.Dimension(1);
+env = rlSimulinkEnv('rlconicaltank1','rlconicaltank1/RL Agent',...
+obsInfo,actInfo);
+env.ResetFcn = @(in)localResetFcn1(in);
+Ts = 1.0;
+Tf = 200;
+rng(0)
+%Creating DDPG agent
+61
+statePath = [
+ imageInputLayer([numObservations 1 1], 'Normalization', 'none', 'Name', 'State')
+ fullyConnectedLayer(neuronsOP_FC1, 'Name', 'CriticStateFC1')
+ reluLayer('Name', 'CriticRelu1')
+ fullyConnectedLayer(neuronsOP_FC2, 'Name', 'CriticStateFC2')];
+actionPath = [
+ imageInputLayer([numActions 1 1], 'Normalization', 'none', 'Name', 'Action')
+ fullyConnectedLayer(neuronsAP_FC1, 'Name', 'CriticActionFC1')];
+ commonPath = [
+ additionLayer(2,'Name', 'add')
+ reluLayer('Name','CriticCommonRelu')
+ fullyConnectedLayer(1, 'Name', 'CriticOutput')];
+criticNetwork = layerGraph();
+criticNetwork = addLayers(criticNetwork,statePath);
+criticNetwork = addLayers(criticNetwork,actionPath);
+criticNetwork = addLayers(criticNetwork,commonPath);
+criticNetwork = connectLayers(criticNetwork,'CriticStateFC2','add/in1');
+criticNetwork = connectLayers(criticNetwork,'CriticActionFC1','add/in2');
+figure
+plot(criticNetwork)
+criticOpts = rlRepresentationOptions('LearnRate', criticLearningRate, 'GradientThreshold',1);
+critic = rlRepresentation(criticNetwork,obsInfo,actInfo,'Observation',...
+ {'State'},'Action',{'Action'},criticOpts);
+actorNetwork = [
+ imageInputLayer([numObservations 1 1], 'Normalization', 'none', 'Name', 'State')
+ fullyConnectedLayer(3, 'Name', 'actorFC')
+ tanhLayer('Name', 'actorTanh')
+ fullyConnectedLayer(numActions, 'Name', 'Action')
+ ];
+actorOptions = rlRepresentationOptions('LearnRate',actorLearningRate,'GradientThreshold',1);
+%actor = 
+rlRepresentation(actorNetwork,obsInfo,actInfo,'Observation',{'State'},'Action',{'Action'},actorOptions);
+62
+actor = rlDeterministicActorRepresentation(actorNetwork,obsInfo,actInfo,'Observation',{
+ 
+ 'State'},'Action',{
+ 
+ 'Action'},actorOptions);
+agentOpts = rlDDPGAgentOptions(...
+ 'SampleTime', Ts,...
+ 'TargetSmoothFactor', 1e-3,...
+ 'DiscountFactor', GAMMA, ...
+ 'MiniBatchSize', BATCH_SIZE, ...
+ 'ExperienceBufferLength', 1e6, ...
+ 'ResetExperienceBufferBeforeTraining', false, ...
+ 'SaveExperienceBufferWithAgent', false); 
+initOpts = rlAgentInitializationOptions('NumHiddenUnit',64,'UseRNN',true);
+% Exploration Parameters
+% ----------------------
+% Ornstein Uhlenbeck (OU) action noise:
+% Variance*sqrt(SampleTime) keep between 1% and 10% of your action range
+% Variance is halved by these many samples: 
+% halflife = log(0.5)/log(1-VarianceDecayRate)
+% Default: 0.45, 1e-5
+DDPG_Variance = 1.5;
+DDPG_VarianceDecayRate = 1e-5; % Half-life of 1,000 episodes
+% agentOpts.NoiseOptions.Variance = DDPG_Variance;
+% agentOpts.NoiseOptions.VarianceDecayRate = DDPG_VarianceDecayRate;
+%action = rlDDPGAgent(obsInfo,actInfo,initOpts);
+% load predefined environment
+% obtain observation and action specifications
+obsInfo = getObservationInfo(env);
+actInfo = getActionInfo(env);
+ts = 0.1 ; % sample time
+t = 0:ts:10; % time vector
+63
+%Observations = sin(t);% your signal
+Agent = rlDDPGAgent(actor,critic,agentOpts);
+%Agent = rlDDPGAgent(10,10,3);
+getAction(Agent,{rand(obsInfo(1).Dimension)})
+generatePolicyFunction(Agent)
+maxepisodes = MAX_EPISODES;
+maxsteps = ceil(Tf/Ts);
+% For parallel computing: 'UseParallel',true, ...
+%criticOptions.UseDevice = 'gpu';
+%agent = rlDDPGAgent(actor,critic,agentOpts);
+%maxepisodes = 5000;
+%maxsteps = ceil(Tf/Ts);
+trainOpts = rlTrainingOptions(...
+'MaxEpisodes',maxepisodes, ...
+'MaxStepsPerEpisode',maxsteps, ...
+'ScoreAveragingWindowLength',20, ...
+'Verbose',false, ...
+'Plots','training-progress',...
+'StopTrainingCriteria','AverageReward',...
+'StopTrainingValue',800);
+% Load the pretrained agent for the example.
+trainingresults = train(Agent,env,trainOpts);
+load('WaterTankDDPG.mat','agent')
+rng(0);
+simOptions = rlSimulationOptions('MaxSteps',200,'NumSimulations',1);
+experience = sim(env,Agent,simOptions);
+“local reset function:”
+function in = localResetFcn1(in)
+% Randomize reference signal
+blk = sprintf('rlconicaltank1/Desired-Water-Level');
+64
+heightValues = 
+[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,
+39,40,41,42,43,44,45,46,47,48,49,50,52,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70];
+idx = randperm(length(heightValues),1);
+height = heightValues(idx);
+%function in = localResetFcn(in)
+% randomize reference signal
+%blk = sprintf('rlwatertank/Desired \nWater Level');
+in = setBlockParameter(in,blk,'Value',num2str(height));
+% randomize initial height
+%h = 3*randn + 10;
+%%while h <= 0 || h >= 20
+%h = 3*randn + 10;
+%end
+%blk = 'rlconicaltank1/Water-Tank System/H';
+%in = setBlockParameter(in,blk,'InitialCondition',num2str(h));
+%end
+%height = 3*randn + 10;
+%global state_desired
+%Reward = -abs(state(1)-state_desired);
+%while height <= 0 || height >= 20
+ %height = 3*randn + 10;
+%end
+%in = setBlockParameter(in,blk,'Value',num2str(height));
+%'flow',[-5 0 5],'rlconicaltank'
+% Randomize initial height
+%height = 3* randn + 10;
+%while height <= 0 || height >= 20
+ %height = 3*randn + 10;
+%end
+%blk = 'rlconicaltank1/Desired-Water-Level/height';
+%in = setBlockParameter(in,blk,'InitialCondition',num2str(height));
+65
+end
+‘rlDDPG Agent’
+narginchk(2,4)
+AgentType = "DDPG";
+FirstArg = varargin{1};
+if isa(FirstArg,'rl.representation.rlDeterministicActorRepresentation')
+ % AGENT = RLDDPGAGENT(ACTOR,CRITIC)
+ % AGENT = RLDDPGAGENT(ACTOR,CRITIC,AGENTOPTIONS)
+ Actor = FirstArg;
+ Critic = varargin{2};
+ if nargin < 3
+ AgentOptions = rl.util.getDefaultAgentOptions(AgentType,hasState(Actor));
+ else
+ AgentOptions = varargin{3};
+ end
+ 
+elseif isa(FirstArg,'rl.util.RLDataSpec')
+ % AGENT = rlDDPGAgent(OINFO,AINFO)
+ % AGENT = rlDDPGAgent(OINFO,AINFO,INITOPTIONS)
+ % AGENT = rlDDPGAgent(OINFO,AINFO,AGENTOPTIONS)
+ % AGENT = rlDDPGAgent(OINFO,AINFO,INITOPTIONS,AGENTOPTIONS)
+ [ObservationInfo,ActionInfo,InitOptions,AgentOptions] = 
+rl.util.parseAgentInitializationInputs(AgentType,varargin{:});
+ Actor = rl.representation.rlDeterministicActorRepresentation.createDefault(Observatinfo, ActionInfo, 
+InitOptions);
+ Critic = rl.representation.rlQValueRepresentation.createDefault(ObservationInfo, ActionInfo, InitOptions, 
+'singleOutput');
+else
+ error(message('rl:agent:errDPGInvalidFirstArg'));
+end
+66
+rl.util.validateAgentOptionType(AgentOptions,AgentType);
+Agent = rl.agent.rlDDPGAgent(Actor, Critic, AgentOptions)
